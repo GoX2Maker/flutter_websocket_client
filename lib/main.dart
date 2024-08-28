@@ -14,20 +14,63 @@ class MainApp extends StatefulWidget {
 }
 
 class _MainAppState extends State<MainApp> {
-  // WebSocket 서버에 연결합니다.
-  final WebSocketChannel channel = WebSocketChannel.connect(
-    Uri.parse('ws://localhost:4040/ws'),
-  );
-
-  // 수신한 메시지를 저장할 리스트
-  List<String> messages = [];
-
-  // 텍스트 필드 컨트롤러
+  WebSocketChannel? channel;
+  final List<String> messages = [];
   final TextEditingController controller = TextEditingController();
+  final String serverUrl = 'ws://localhost:4040/ws';
+  final Duration reconnectInterval = const Duration(seconds: 5); // 재연결 시도 간격
+
+  @override
+  void initState() {
+    super.initState();
+    _connectWebSocket();
+  }
+
+  void _connectWebSocket() {
+    try {
+      channel = WebSocketChannel.connect(Uri.parse(serverUrl));
+    } catch (e) {
+      print('Error: $e');
+      _reconnect();
+    }
+
+    channel!.stream.listen(
+      (message) {
+        setState(() {
+          messages.add(message.toString());
+        });
+
+        if (message == 'ping') {
+          channel!.sink.add('pong');
+          print('Received ping, sent pong');
+        }
+      },
+      onDone: () {
+        print('Connection is closed');
+        _reconnect();
+      },
+      onError: (error) {
+        print('Error: $error');
+        _reconnect();
+      },
+    );
+  }
+
+  void _reconnect() {
+    print(
+        'Attempting to reconnect in ${reconnectInterval.inSeconds} seconds...');
+    Future.delayed(reconnectInterval, () {
+      if (mounted) {
+        setState(() {
+          _connectWebSocket();
+        });
+      }
+    });
+  }
 
   @override
   void dispose() {
-    channel.sink.close(status.goingAway);
+    channel?.sink.close(status.goingAway);
     super.dispose();
   }
 
@@ -43,20 +86,12 @@ class _MainAppState extends State<MainApp> {
           child: Column(
             children: <Widget>[
               Expanded(
-                child: StreamBuilder(
-                  stream: channel.stream,
-                  builder: (context, snapshot) {
-                    if (snapshot.hasData) {
-                      messages.add(snapshot.data.toString());
-                    }
-                    return ListView(
-                      children: messages
-                          .map((msg) => ListTile(
-                                title: Text(msg),
-                              ))
-                          .toList(),
-                    );
-                  },
+                child: ListView(
+                  children: messages
+                      .map((msg) => ListTile(
+                            title: Text(msg),
+                          ))
+                      .toList(),
                 ),
               ),
               Padding(
@@ -74,7 +109,7 @@ class _MainAppState extends State<MainApp> {
                       icon: const Icon(Icons.send),
                       onPressed: () {
                         if (controller.text.isNotEmpty) {
-                          channel.sink.add(controller.text);
+                          channel?.sink.add(controller.text);
                           controller.clear();
                         }
                       },
